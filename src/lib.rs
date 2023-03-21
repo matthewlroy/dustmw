@@ -49,6 +49,33 @@ pub async fn dust_db_create(pile_name: String, data: String) -> io::Result<Optio
     }
 }
 
+pub async fn dust_db_health_check() -> io::Result<()> {
+    let result = match health_check().await {
+        Ok(it) => it,
+        Err(box_err) => {
+            let e_kind = io::ErrorKind::BrokenPipe;
+            let e = format!(
+                "Error pinging dust db; broken connection: \"{}\"",
+                box_err.to_string()
+            );
+            let error = io::Error::new(e_kind, e);
+            return Err(error);
+        }
+    };
+
+    let mut parts = result.splitn(2, ' ');
+
+    match parts.next() {
+        Some("0") => Ok(()),
+        Some(_) | None => {
+            let e_kind = io::ErrorKind::NotFound;
+            let e = "Error reading response back from db, unsure of db connection health. . .";
+            let error = io::Error::new(e_kind, e);
+            Err(error)
+        }
+    }
+}
+
 /// END PUBLIC METHODS
 
 struct DustDbCreateSchema {
@@ -59,6 +86,49 @@ struct DustDbCreateSchema {
 impl DustDbCreateSchema {
     fn serialize_to_str(&self) -> String {
         format!("CREATE {} {}\n", self.pile_name, self.data)
+    }
+}
+
+async fn health_check() -> Result<String, Box<dyn Error>> {
+    let addr = format!(
+        "{}:{}",
+        get_env_var("DUST_DB_ADDR"),
+        get_env_var("DUST_DB_PORT")
+    )
+    .parse::<SocketAddr>()?;
+
+    let mut response: BytesMut = Default::default();
+    let mut stdout = FramedWrite::new(io::stdout(), BytesCodec::new()); // TODO: supress stdout
+    let mut stream = TcpStream::connect(addr).await?;
+    let (r, w) = stream.split();
+    let mut sink = FramedWrite::new(w, BytesCodec::new());
+    let mut stream = FramedRead::new(r, BytesCodec::new())
+        .filter_map(|i| -> future::Ready<Option<Bytes>> {
+            match i {
+                Ok(i) => {
+                    response = i.clone();
+                    future::ready(Some(i.freeze()))
+                }
+                Err(e) => {
+                    println!("Error: failed to read from socket; {}", e);
+                    future::ready(None)
+                }
+            }
+        })
+        .map(Ok);
+
+    let msg = Bytes::from("PING\n");
+    match future::join(sink.send(msg), stdout.send_all(&mut stream)).await {
+        (Err(e), _) | (_, Err(e)) => Err(e.into()),
+        _ => {
+            let mut response_str = String::from_utf8(response.to_ascii_lowercase()).unwrap();
+
+            // remove the \n that is added by our tcp server response
+            let len = response_str.len();
+            response_str.truncate(len - 1);
+
+            Ok(response_str)
+        }
     }
 }
 
@@ -126,6 +196,14 @@ mod tests {
     async fn test_dust_db_create_fail() {
         match crate::dust_db_create("users_from_client".to_owned(), "7".to_owned()).await {
             Ok(it) => it,
+            Err(e) => panic!("{}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_dust_db_health_check() {
+        match crate::dust_db_health_check().await {
+            Ok(_) => "",
             Err(e) => panic!("{}", e),
         };
     }
