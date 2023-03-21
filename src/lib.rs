@@ -98,7 +98,7 @@ async fn health_check() -> Result<String, Box<dyn Error>> {
     .parse::<SocketAddr>()?;
 
     let mut response: BytesMut = Default::default();
-    let mut stdout = FramedWrite::new(io::stdout(), BytesCodec::new()); // TODO: supress stdout
+    let mut stdout = FramedWrite::new(io::sink(), BytesCodec::new());
     let mut stream = TcpStream::connect(addr).await?;
     let (r, w) = stream.split();
     let mut sink = FramedWrite::new(w, BytesCodec::new());
@@ -141,7 +141,7 @@ async fn create(create_data: DustDbCreateSchema) -> Result<String, Box<dyn Error
     .parse::<SocketAddr>()?;
 
     let mut response: BytesMut = Default::default();
-    let mut stdout = FramedWrite::new(io::stdout(), BytesCodec::new()); // TODO: supress stdout
+    let mut stdout = FramedWrite::new(io::sink(), BytesCodec::new());
     let mut stream = TcpStream::connect(addr).await?;
     let (r, w) = stream.split();
     let mut sink = FramedWrite::new(w, BytesCodec::new());
