@@ -22,33 +22,31 @@ pub async fn dust_db_create(pile_name: String, data: String) -> io::Result<Optio
         }
     };
 
-    return Ok(Some(result));
+    let mut parts = result.splitn(2, ' ');
 
-    // let mut parts = result.splitn(2, ' ');
+    match parts.next() {
+        Some("0") => match parts.next() {
+            Some(msg) => Ok(Some(String::from(msg))),
+            None => Ok(None),
+        },
+        Some("1") => {
+            let err_msg = parts.next();
 
-    // match parts.next() {
-    //     Some("0") => match parts.next() {
-    //         Some(msg) => Ok(Some(String::from(msg))),
-    //         None => return Err("CREATE must have a pile name specified".to_owned()),
-    //     },
-    //     Some("1") => {
-    //         let e_kind = io::ErrorKind::InvalidInput;
-    //         let e = format!(
-    //             "Error creating db entry due to invalid input: \"{}\"",
-    //             box_err.to_string()
-    //         );
-    //         let error = io::Error::new(e_kind, e);
-    //         Err(error)
-    //     }
-    //     Some(_) => {
-    //         println!("_!");
-    //         Ok("".to_owned())
-    //     }
-    //     None => {
-    //         println!("None!");
-    //         Ok("".to_owned())
-    //     }
-    // }
+            let e_kind = io::ErrorKind::InvalidInput;
+            let e = format!(
+                "Error creating db entry due to invalid input: \"{}\"",
+                err_msg.unwrap()
+            );
+            let error = io::Error::new(e_kind, e);
+            Err(error)
+        }
+        Some(_) | None => {
+            let e_kind = io::ErrorKind::NotFound;
+            let e = "Error reading response back from db, entry might have still been created. . .";
+            let error = io::Error::new(e_kind, e);
+            Err(error)
+        }
+    }
 }
 
 /// END PUBLIC METHODS
@@ -109,10 +107,26 @@ async fn create(create_data: DustDbCreateSchema) -> Result<String, Box<dyn Error
 
 mod tests {
     #[tokio::test]
-    async fn test_dust_db_create() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_dust_db_create() {
         match crate::dust_db_create("users_from_client".to_owned(), "7A".to_owned()).await {
-            Ok(_) => Ok(()),
+            Ok(opt_str) => {
+                // 15th character is always a 4 in UUID v4
+                let uuidv4_response = opt_str.unwrap();
+                assert_eq!(
+                    uuidv4_response.chars().nth(14).unwrap().to_string(),
+                    "4".to_string()
+                );
+            }
             Err(e) => panic!("{}", e),
-        }
+        };
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn test_dust_db_create_fail() {
+        match crate::dust_db_create("users_from_client".to_owned(), "7".to_owned()).await {
+            Ok(it) => it,
+            Err(e) => panic!("{}", e),
+        };
     }
 }
