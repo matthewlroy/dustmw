@@ -1,18 +1,54 @@
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use dustcfg::get_env_var;
-use futures::{future, SinkExt, StreamExt, TryStreamExt};
-use std::{error::Error, net::SocketAddr, sync::Arc};
+use futures::{future, SinkExt, StreamExt};
+use std::{error::Error, net::SocketAddr};
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
 /// PUBLIC METHODS
 
-pub async fn dust_db_create(pile_name: String, data: String) -> Result<(), Box<dyn Error>> {
-    println!("called create");
-    create(DustDbCreateSchema { pile_name, data }).await?;
-    println!("returned from internal create");
-    Ok(())
+pub async fn dust_db_create(pile_name: String, data: String) -> io::Result<Option<String>> {
+    let result = match create(DustDbCreateSchema { pile_name, data }).await {
+        Ok(it) => it,
+        Err(box_err) => {
+            let e_kind = io::ErrorKind::BrokenPipe;
+            let e = format!(
+                "Error creating db entry due to broken connection: \"{}\"",
+                box_err.to_string()
+            );
+            let error = io::Error::new(e_kind, e);
+            return Err(error);
+        }
+    };
+
+    return Ok(Some(result));
+
+    // let mut parts = result.splitn(2, ' ');
+
+    // match parts.next() {
+    //     Some("0") => match parts.next() {
+    //         Some(msg) => Ok(Some(String::from(msg))),
+    //         None => return Err("CREATE must have a pile name specified".to_owned()),
+    //     },
+    //     Some("1") => {
+    //         let e_kind = io::ErrorKind::InvalidInput;
+    //         let e = format!(
+    //             "Error creating db entry due to invalid input: \"{}\"",
+    //             box_err.to_string()
+    //         );
+    //         let error = io::Error::new(e_kind, e);
+    //         Err(error)
+    //     }
+    //     Some(_) => {
+    //         println!("_!");
+    //         Ok("".to_owned())
+    //     }
+    //     None => {
+    //         println!("None!");
+    //         Ok("".to_owned())
+    //     }
+    // }
 }
 
 /// END PUBLIC METHODS
@@ -28,11 +64,7 @@ impl DustDbCreateSchema {
     }
 }
 
-fn init_response(i: Bytes) -> Arc<Bytes> {
-    Arc::new(i)
-}
-
-async fn create(create_data: DustDbCreateSchema) -> Result<(), Box<dyn Error>> {
+async fn create(create_data: DustDbCreateSchema) -> Result<String, Box<dyn Error>> {
     let addr = format!(
         "{}:{}",
         get_env_var("DUST_DB_ADDR"),
@@ -40,42 +72,37 @@ async fn create(create_data: DustDbCreateSchema) -> Result<(), Box<dyn Error>> {
     )
     .parse::<SocketAddr>()?;
 
-    let resp: Arc<Bytes> = Default::default();
-
-    let mut stdout = FramedWrite::new(io::stdout(), BytesCodec::new());
+    let mut response: BytesMut = Default::default();
+    let mut stdout = FramedWrite::new(io::stdout(), BytesCodec::new()); // TODO: supress stdout
     let mut stream = TcpStream::connect(addr).await?;
     let (r, w) = stream.split();
     let mut sink = FramedWrite::new(w, BytesCodec::new());
     let mut stream = FramedRead::new(r, BytesCodec::new())
-        .filter_map(|i| match i {
-            Ok(i) => {
-                println!("something happned here? i = {:?}", i);
-                let resp = init_response(i.clone().into());
-                future::ready(Some(i.freeze()))
-            }
-            Err(e) => {
-                println!("Error: failed to read from socket; {}", e);
-                future::ready(None)
+        .filter_map(|i| -> future::Ready<Option<Bytes>> {
+            match i {
+                Ok(i) => {
+                    response = i.clone();
+                    future::ready(Some(i.freeze()))
+                }
+                Err(e) => {
+                    println!("Error: failed to read from socket; {}", e);
+                    future::ready(None)
+                }
             }
         })
         .map(Ok);
 
-    println!("before msg creation");
-
     let msg = Bytes::from(create_data.serialize_to_str());
-
-    println!("message instantiated = {:?}", msg);
-
-    // sink.send(msg);
-
-    // Ok(())
-
     match future::join(sink.send(msg), stdout.send_all(&mut stream)).await {
         (Err(e), _) | (_, Err(e)) => Err(e.into()),
-        i => {
-            println!("return now!");
-            println!("static_resp = {:?}", resp);
-            Ok(())
+        _ => {
+            let mut response_str = String::from_utf8(response.to_ascii_lowercase()).unwrap();
+
+            // remove the \n that is added by our tcp server response
+            let len = response_str.len();
+            response_str.truncate(len - 1);
+
+            Ok(response_str)
         }
     }
 }
@@ -83,7 +110,9 @@ async fn create(create_data: DustDbCreateSchema) -> Result<(), Box<dyn Error>> {
 mod tests {
     #[tokio::test]
     async fn test_dust_db_create() -> Result<(), Box<dyn std::error::Error>> {
-        let _ = crate::dust_db_create("users_from_client".to_owned(), "7A".to_owned()).await;
-        Ok(())
+        match crate::dust_db_create("users_from_client".to_owned(), "7A".to_owned()).await {
+            Ok(_) => Ok(()),
+            Err(e) => panic!("{}", e),
+        }
     }
 }
