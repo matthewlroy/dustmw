@@ -1,12 +1,30 @@
 use bytes::{Bytes, BytesMut};
-use dustcfg::get_env_var;
+use dustcfg::{encode_utf8_to_hex, get_env_var};
 use futures::{future, SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, net::SocketAddr};
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
+/// PUBLIC SCHEMAS
+#[derive(Serialize, Deserialize)]
+pub struct CreateUserSchema {
+    pub email: String,
+    pub password: String,
+}
+
+const USERS_PILE_NAME: &'static str = "users";
+/// END PUBLIC SCHEMAS
+
 /// PUBLIC METHODS
+pub async fn dust_db_create_user(
+    sanitized_create_user_obj: CreateUserSchema,
+) -> io::Result<Option<String>> {
+    let json_string = serde_json::to_string(&sanitized_create_user_obj)?;
+    let hex_data = encode_utf8_to_hex(&json_string);
+    dust_db_create(USERS_PILE_NAME.to_owned(), hex_data).await
+}
 
 pub async fn dust_db_create(pile_name: String, data: String) -> io::Result<Option<String>> {
     let result = match create(DustDbCreateSchema { pile_name, data }).await {
@@ -204,6 +222,26 @@ mod tests {
     async fn test_dust_db_health_check() {
         match crate::dust_db_health_check().await {
             Ok(_) => "",
+            Err(e) => panic!("{}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_dust_db_create_user() {
+        let _ = match crate::dust_db_create_user(crate::CreateUserSchema {
+            email: "matthew@saplink.io".to_owned(),
+            password: "$2b$10$4Ga7b2ymZ3/HLfLPYLyxtOGWcLhRckny6zsH/i117btQbdjhnWR7W".to_owned(),
+        })
+        .await
+        {
+            Ok(uuid) => {
+                let output = std::process::Command::new("cat")
+                    .arg(format!("/dust/dustdb/data/users/{}.json", uuid.unwrap()))
+                    .output()
+                    .unwrap();
+
+                assert_eq!(std::str::from_utf8(&output.stdout).unwrap(), "{\"email\":\"matthew@saplink.io\",\"password\":\"$2b$10$4Ga7b2ymZ3/HLfLPYLyxtOGWcLhRckny6zsH/i117btQbdjhnWR7W\"}");
+            }
             Err(e) => panic!("{}", e),
         };
     }
