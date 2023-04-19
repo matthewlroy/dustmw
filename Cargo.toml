@@ -12,3 +12,4 @@ bytes = "1.4.0"
 serde = "1.0.158"
 tokio-serde = { version = "0.8.0", features = ["json"] }
 serde_json = { version = "1.0.94" }
+rand = "0.8.5"
