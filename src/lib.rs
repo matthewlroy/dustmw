@@ -40,7 +40,7 @@ pub async fn dust_db_create_user(
             Some(_) => {
                 let e_kind = io::ErrorKind::AlreadyExists;
                 let e = format!(
-                    "Email address already exists, \"{}\"",
+                    "Email address already exists: \"{}\"",
                     sanitized_create_user_obj.email
                 );
                 let error = io::Error::new(e_kind, e);
