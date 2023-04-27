@@ -36,21 +36,24 @@ pub async fn dust_db_create_user(
     .await
     {
         Ok(db_response) => match db_response {
+            // User is found!
             Some(_) => {
                 let e_kind = io::ErrorKind::AlreadyExists;
                 let e = format!(
-                    "Error creating user, email already exists in db: \"{}\"",
+                    "Email address already exists, \"{}\"",
                     sanitized_create_user_obj.email
                 );
                 let error = io::Error::new(e_kind, e);
                 Err(error)
             }
+            // User does not exist
             None => {
                 let json_string = serde_json::to_string(&sanitized_create_user_obj)?;
                 let hex_data = encode_utf8_to_hex(&json_string);
                 dust_db_create(USERS_PILE_NAME.to_owned(), hex_data).await
             }
         },
+        // Generic error
         Err(e) => Err(e),
     }
 }
@@ -406,7 +409,7 @@ mod tests {
             Ok(_) => panic!(),
             Err(e) => {
                 assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
-            },
+            }
         };
     }
 }
